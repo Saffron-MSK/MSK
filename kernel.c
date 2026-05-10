@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define VGA_COLOR (0x0F << 8)  // black bg + white text
+#define VGA_COLOR (0x0F << 8)
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
 
@@ -12,6 +12,9 @@
 uint16_t* VGA = (uint16_t*)0xB8000;
 int cursor = 0;
 
+void print(const char* s);
+void putc(char c);
+
 void outb(uint16_t port, uint8_t val) {
     asm volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
 }
@@ -21,14 +24,7 @@ void disable_cursor() {
     outb(0x3D5, 0x20);
 }
 
-void draw_cursor(int visible) {
-    if (visible) {
-        VGA[cursor] = VGA_COLOR | 0xDB; 
-    } else {
-        VGA[cursor] = VGA_COLOR | ' ';  
-    }
-}
-
+// ================= SCREEN =================
 void scroll() {
     for (int i = 0; i < VGA_WIDTH * (VGA_HEIGHT - 1); i++)
         VGA[i] = VGA[i + VGA_WIDTH];
@@ -46,7 +42,7 @@ void putc(char c) {
     else if (c == '\b') {
         if (cursor > 0) {
             cursor--;
-            VGA[cursor] = VGA_COLOR | ' ';  
+            VGA[cursor] = VGA_COLOR | ' ';
         }
     }
     else {
@@ -95,30 +91,16 @@ char keymap_shift[128] = {
 };
 
 char get_key() {
-    uint32_t counter = 0;
-    int state = 0;
-
     while (1) {
-        // Only flash if NO key is being pressed
-        if (!(inb(0x64) & 1)) {
-            counter++;
-            if (counter % 500000 == 0) {
-                state = !state;
-                draw_cursor(state);
-            }
-        } else {
-            // Key is waiting!
-            uint8_t sc = inb(0x60);
-            
-            // Hide cursor immediately when any key action happens
-            draw_cursor(0); 
+        if (!(inb(0x64) & 1)) continue;
 
-            if (sc == 0x2A || sc == 0x36) { shift = 1; continue; }
-            if (sc == 0xAA || sc == 0xB6) { shift = 0; continue; }
-            if (sc & 0x80) continue; // Key release
+        uint8_t sc = inb(0x60);
 
-            return shift ? keymap_shift[sc] : keymap[sc];
-        }
+        if (sc == 0x2A || sc == 0x36) { shift = 1; continue; }
+        if (sc == 0xAA || sc == 0xB6) { shift = 0; continue; }
+        if (sc & 0x80) continue;
+
+        return shift ? keymap_shift[sc] : keymap[sc];
     }
 }
 
@@ -140,7 +122,8 @@ char* skip(char* s) {
 void clean(char* s) {
     int i = 0;
     while (s[i]) {
-        if (s[i] == '\n' || s[i] == '\r') s[i] = 0;
+        if (s[i] == '\n' || s[i] == '\r')
+            s[i] = 0;
         i++;
     }
 }
@@ -148,7 +131,10 @@ void clean(char* s) {
 void trim(char* s) {
     int len = 0;
     while (s[len]) len++;
-    while (len > 0 && s[len - 1] == ' ') { s[len - 1] = 0; len--; }
+    while (len > 0 && s[len - 1] == ' ') {
+        s[len - 1] = 0;
+        len--;
+    }
 }
 
 char* arg(char* s) {
@@ -175,93 +161,159 @@ Folder folder_pool[MAX_FOLDERS];
 int folder_used = 0;
 
 void init_fs() {
-    root.name[0] = '/'; root.name[1] = 0;
-    root.parent = 0; root.folder_count = 0; root.file_count = 0;
+    root.name[0] = '/';
+    root.name[1] = 0;
+    root.parent = 0;
+    root.folder_count = 0;
+    root.file_count = 0;
     current = &root;
 }
 
-// ================= OPS =================
+// ================= COMMANDS =================
 void cf(char* name) {
-    name = skip(name); trim(name);
+    if (folder_used >= MAX_FOLDERS) {
+        print("\nERROR: Folder limit reached");
+        return;
+    }
+
+    name = skip(name);
+    trim(name);
+
     Folder* f = &folder_pool[folder_used++];
     int i = 0;
-    while (name[i] && i < 31) { f->name[i] = name[i]; i++; }
-    f->name[i] = 0; f->parent = current; f->folder_count = 0; f->file_count = 0;
+
+    while (name[i] && i < 31) {
+        f->name[i] = name[i];
+        i++;
+    }
+    f->name[i] = 0;
+
+    f->parent = current;
+    f->folder_count = 0;
+    f->file_count = 0;
+
     current->folders[current->folder_count++] = f;
 }
 
 void rf(char* name) {
-    name = skip(name); trim(name);
+    name = skip(name);
+    trim(name);
+
     for (int i = 0; i < current->folder_count; i++) {
         if (streq(current->folders[i]->name, name)) {
             current->folders[i] = current->folders[current->folder_count - 1];
-            current->folder_count--; return;
+            current->folder_count--;
+            return;
         }
     }
     print("\nERROR: Folder not found");
 }
 
 void rt(char* name) {
-    name = skip(name); trim(name);
+    name = skip(name);
+    trim(name);
+
     for (int i = 0; i < current->file_count; i++) {
         if (streq(current->files[i].name, name)) {
             current->files[i] = current->files[current->file_count - 1];
-            current->file_count--; return;
+            current->file_count--;
+            return;
         }
     }
     print("\nERROR: File not found");
 }
 
 void cd(char* name) {
-    name = skip(name); trim(name);
-    if (name[0] == 0) { current = &root; return; }
-    if (name[0]=='.' && name[1]=='.') {
-        if (current->parent) current = current->parent;
+    name = skip(name);
+    trim(name);
+
+    if (name[0] == 0) {
+        current = &root;
         return;
     }
+
+    if (name[0] == '.' && name[1] == '.') {
+        if (current->parent)
+            current = current->parent;
+        return;
+    }
+
     for (int i = 0; i < current->folder_count; i++) {
         if (streq(current->folders[i]->name, name)) {
-            current = current->folders[i]; return;
+            current = current->folders[i];
+            return;
         }
     }
+
     print("\nERROR: Folder not found");
 }
 
 void ct(char* name, char* content) {
-    name = skip(name); trim(name); content = skip(content); trim(content);
+    if (current->file_count >= MAX_FILES) {
+        print("\nERROR: File limit reached");
+        return;
+    }
+
+    name = skip(name);
+    trim(name);
+
+    content = skip(content);
+    trim(content);
+
     File* f = &current->files[current->file_count++];
+
     int i = 0;
-    while (name[i] && i < 31) { f->name[i] = name[i]; i++; }
-    f->name[i] = 0; i = 0;
-    while (content[i] && i < 127) { f->content[i] = content[i]; i++; }
+    while (name[i] && i < 31) {
+        f->name[i] = name[i];
+        i++;
+    }
+    f->name[i] = 0;
+
+    i = 0;
+    while (content[i] && i < 127) {
+        f->content[i] = content[i];
+        i++;
+    }
     f->content[i] = 0;
 }
 
 void fl(char* name) {
-    name = skip(name); trim(name);
+    name = skip(name);
+    trim(name);
+
     for (int i = 0; i < current->file_count; i++) {
         if (streq(current->files[i].name, name)) {
-            print("\n"); print(current->files[i].content); return;
+            print("\n");
+            print(current->files[i].content);
+            return;
         }
     }
     print("\nERROR: File not found");
 }
 
-void echo(char* s) { print("\n"); print(skip(s)); }
+void echo(char* s) {
+    print("\n");
+    print(skip(s));
+}
 
 void ls() {
     print("\n");
+
     for (int i = 0; i < current->folder_count; i++) {
-        print("[DIR] "); print(current->folders[i]->name); print("\n");
+        print("[DIR] ");
+        print(current->folders[i]->name);
+        print("\n");
     }
+
     for (int i = 0; i < current->file_count; i++) {
-        print("[FILE] "); print(current->files[i].name); print("\n");
+        print("[FILE] ");
+        print(current->files[i].name);
+        print("\n");
     }
 }
 
 void backspace() {
     if (cursor > 0) {
-        // Don't draw_cursor(0) here, shell loop handles it
         cursor--;
         VGA[cursor] = VGA_COLOR | ' ';
     }
@@ -270,20 +322,33 @@ void backspace() {
 // ================= SHELL =================
 void shell() {
     char buffer[256];
+
     while (1) {
         print("\n> ");
         int i = 0;
+
         while (1) {
             char c = get_key();
-            // Once a key is returned, the cursor is already hidden by get_key
-            if (c == '\n') { putc('\n'); break; }
+
+            if (c == '\n') {
+                putc('\n');
+                break;
+            }
+
             if (c == 8) {
-                if (i > 0) { i--; backspace(); }
+                if (i > 0) {
+                    i--;
+                    backspace();
+                }
                 continue;
             }
-            if (i < 255) { buffer[i++] = c; }
+
+            if (i < 255)
+                buffer[i++] = c;
+
             putc(c);
         }
+
         buffer[i] = 0;
         clean(buffer);
         char* cmd = skip(buffer);
@@ -295,22 +360,32 @@ void shell() {
         else if (cmd[0]=='r' && cmd[1]=='t') rt(arg(cmd));
         else if ((cmd[0]=='f' && cmd[1]=='l') || (cmd[0]=='l' && cmd[1]=='f')) fl(arg(cmd));
         else if (cmd[0]=='c' && cmd[1]=='t') {
-            char* p = arg(cmd); char* eq = p;
+            char* p = arg(cmd);
+            char* eq = p;
+
             while (*eq && *eq != '=') eq++;
-            if (*eq == 0) { print("\nERROR: Invalid ct format"); continue; }
-            *eq = 0; ct(p, eq + 1);
+
+            if (*eq == 0) {
+                print("\nERROR: Invalid ct format");
+                continue;
+            }
+
+            *eq = 0;
+            ct(p, eq + 1);
         }
-        else if (cmd[0]=='e' && cmd[1]=='c' && cmd[2]=='h' && cmd[3]=='o') echo(cmd + 4);
-        else if (cmd[0]=='c' && cmd[1]=='l') clear();
-        else print("\nERROR: Unknown command");
+        else if (cmd[0]=='e' && cmd[1]=='c' && cmd[2]=='h' && cmd[3]=='o')
+            echo(cmd + 4);
+        else if (cmd[0]=='c' && cmd[1]=='l')
+            clear();
+        else
+            print("\nERROR: Unknown command");
     }
 }
 
 // ================= KERNEL =================
 void kernel_main() {
-    disable_cursor(); 
+    disable_cursor();
     clear();
     init_fs();
-
     shell();
 }
