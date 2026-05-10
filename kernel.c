@@ -1,7 +1,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define VGA_COLOR (0x1F << 8)  // blue bg + white text
+#define VGA_COLOR (0x0F << 8)  // black bg + white text
 #define VGA_WIDTH 80
 #define VGA_HEIGHT 25
 
