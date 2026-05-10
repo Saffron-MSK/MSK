@@ -10,6 +10,7 @@ all: i386
 i386:
 	$(ASM) -f elf32 boot.asm -o boot.o
 	$(CC) $(CFLAGS) kernel.c -o kernel.o
-	$(LD) $(LDFLAGS) -o kernel.elf boot.o kernel.o
+	$(LD) $(LDFLAGS) -o msk-i386.elf boot.o kernel.o
+	mv msk-i386.elf msk-i386
 clean:
-	rm -f *.o *.elf
+	rm -f *.o msk-i386
