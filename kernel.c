@@ -220,7 +220,7 @@ void rt(char* name) {
             return;
         }
     }
-    print("\nERROR: File not found");
+    print("\nerror: File not found");
 }
 
 void cd(char* name) {
@@ -245,12 +245,12 @@ void cd(char* name) {
         }
     }
 
-    print("\nERROR: Folder not found");
+    print("\nerror: Folder not found");
 }
 
 void ct(char* name, char* content) {
     if (current->file_count >= MAX_FILES) {
-        print("\nERROR: File limit reached");
+        print("\nWARNING: File limit reached");
         return;
     }
 
@@ -288,7 +288,7 @@ void fl(char* name) {
             return;
         }
     }
-    print("\nERROR: File not found");
+    print("\nerror: File not found");
 }
 
 void echo(char* s) {
@@ -366,7 +366,7 @@ void shell() {
             while (*eq && *eq != '=') eq++;
 
             if (*eq == 0) {
-                print("\nERROR: Invalid ct format");
+                print("\nerror: Invalid ct format");
                 continue;
             }
 
@@ -378,7 +378,7 @@ void shell() {
         else if (cmd[0]=='c' && cmd[1]=='l')
             clear();
         else
-            print("\nERROR: Unknown command");
+            print("\nerror: Unknown command");
     }
 }
 
